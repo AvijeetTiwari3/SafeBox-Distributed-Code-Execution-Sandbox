@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-00C853.svg?style=for-the-badge)](LICENSE)
 [![Zero-Cost Stack](https://img.shields.io/badge/Cost-%240%20(100%25%20Open%20Source)-blueviolet.svg?style=for-the-badge)](https://github.com/)
 
-[**Architecture**](#-1-system-architecture) • [**Mathematical Foundation**](#-2-mathematical-foundation--latency-budget-proofs) • [**Defense-in-Depth Threat Model**](#-3-defense-in-depth-threat-model) • [**Empirical Benchmarks**](#-4-empirical-benchmarks--latency-profile) • [**Quickstart**](#-5-quickstart--execution-guide) • [**Google Systems Deep-Dive**](#-6-systems-deep-dive--google--hackerrank-interview-qa)
+[**Architecture**](#1-system-architecture) • [**Mathematical Foundation**](#2-mathematical-foundation--latency-budget-proofs) • [**Threat Model**](#3-defense-in-depth-threat-model) • [**Empirical Benchmarks**](#4-empirical-benchmarks--latency-profile) • [**Project Structure**](#5-project-structure) • [**Quickstart**](#6-quickstart--execution-guide) • [**Systems Deep-Dive**](#7-systems-deep-dive-google--hackerrank-interview-qa)
 
 </div>
 
@@ -18,10 +18,10 @@
 
 ## 📌 Executive Summary & Production Motivation
 
-In competitive programming platforms, distributed judging systems, and live cloud IDEs (such as **HackerRank Screen/CodePair**, **LeetCode Judge**, and **Google Borg Sandboxes**), executing untrusted, user-submitted code in multi-tenant clusters presents a classic **adversarial systems engineering bottleneck**:
+In competitive programming platforms, distributed judging systems, and live cloud IDEs (such as **HackerRank Screen/CodePair**, **LeetCode Judge**, and **Google Borg Sandboxes**), executing untrusted user code in multi-tenant clusters presents a classic adversarial systems engineering bottleneck:
 
-1. **The Cold-Start Latency Wall:** Traditional on-demand container spin-up (`docker run`) incurs **$450\text{ms} - 1,200\text{ms}$** of startup latency due to daemon RPC overhead, namespace creation, cgroup tree allocation, and OverlayFS layer stacking. Under high-concurrency contest spikes, this induces catastrophic queue backpressure.
-2. **Adversarial Exploitation & Zero-Day Kernel Escapes:** Malicious code actively attempts denial-of-service via fork bombs (`:(){ :|:& };:`), socket-based cloud metadata reconnaissance, memory exhaustion, unhandled hardware interrupts, and unauthorized system calls.
+1. **The Cold-Start Latency Wall:** Traditional on-demand container spin-up (`docker run`) incurs **450ms – 1,200ms** of startup latency due to daemon RPC overhead, namespace creation, cgroup tree allocation, and OverlayFS layer stacking. Under high-concurrency contest spikes, this induces catastrophic queue backpressure.
+2. **Adversarial Exploitation & Zero-Day Kernel Escapes:** Malicious code actively attempts denial-of-service via fork bombs, socket-based cloud metadata reconnaissance, memory exhaustion, unhandled hardware interrupts, and unauthorized system calls.
 3. **Noisy Neighbor Resource Starvation:** Without deterministic CPU quotas and physical memory ceilings, runaway loops and unconstrained heap allocations exhaust host page tables and starve adjacent tenant executions.
 
 ```
@@ -35,7 +35,7 @@ In competitive programming platforms, distributed judging systems, and live clou
 ```
 
 **SafeBox** resolves these production bottlenecks through **Dual-Kernel Resource Fencing** paired with an **Asynchronous Pre-Warmed Standby Pool**:
-* **Dual-Kernel Isolation Boundary:** Configures unified **Linux `cgroups v2`** (or native **Windows Job Objects** via `win32job`) enforcing hard CPU bandwidth quotas ($0.5\text{ core}$), physical RAM ceilings ($128\text{MB}$), and hard process count caps ($N=16$) to eliminate fork-bomb exploits at the kernel level.
+* **Dual-Kernel Isolation Boundary:** Configures unified **Linux `cgroups v2`** (or native **Windows Job Objects** via `win32job`) enforcing hard CPU bandwidth quotas (0.5 core), physical RAM ceilings (128MB), and hard process count caps ($N=16$) to eliminate fork-bomb exploits at the kernel level.
 * **`seccomp-bpf` Syscall Whitelisting:** Enforces a strict Berkeley Packet Filter (BPF) whitelist restricting program execution to $\approx 45$ safe system calls (`read`, `write`, `mmap`, `exit_group`), blocking `socket`, `connect`, `ptrace`, `kill`, and namespace modifications.
 * **Zero Cold-Start Pre-Warmed Pool:** Implements an asynchronous FIFO standby pool maintaining warmed execution slots across **Python 3**, **C++17 (MinGW/GCC)**, and **JavaScript (Node.js)**, slashing sandbox acquisition latency to **$<5\text{ms}$**.
 * **Stream Telemetry & Formal Verdicts:** Emits real-time chunked stdout/stderr streams over WebSockets and exports Prometheus metrics classifying verdicts: Accepted (`AC`), Wrong Answer (`WA`), Time Limit Exceeded (`TLE`), Memory Limit Exceeded (`MLE`), Runtime Error (`RE`), Compilation Error (`CE`), and Security Rejection (`SE`).
@@ -47,33 +47,33 @@ In competitive programming platforms, distributed judging systems, and live clou
 ```mermaid
 flowchart TD
     subgraph ClientLayer ["1. Ingress & Client Streaming Layer"]
-        Client([Web Client / IDE / Contestant]) -->|WebSocket Stream / REST| Gateway[FastAPI Ingress Gateway / ASGI Engine]
-        Gateway -->|Code, Stdin, Resource Ceilings| Broker[Distributed Job Broker: Redis Streams / Local Async Queue]
+        Client(["Web Client / Contestant IDE"]) -->|"WebSocket Stream / REST"| Gateway["FastAPI Ingress Gateway (ASGI)"]
+        Gateway -->|"Code, Stdin, Resource Limits"| Broker["Distributed Job Broker (Redis / Async Queue)"]
     end
 
     subgraph PoolOrchestrator ["2. Orchestration & Standby Pool Manager"]
-        Broker --> Consumer[Worker Dispatcher Daemon]
-        Consumer --> PoolMgr[Pre-Warmed Pool Manager]
-        PoolMgr <-->|Acquire Slot (<5ms) / Background Replenish| WarmPool[(FIFO Standby Sandbox Pool\nPre-Warmed Execution Slots)]
+        Broker --> Consumer["Worker Dispatcher Daemon"]
+        Consumer --> PoolMgr["Pre-Warmed Pool Manager"]
+        PoolMgr --- WarmPool[("FIFO Standby Sandbox Pool<br/>Pre-Warmed Execution Slots")]
     end
 
     subgraph SandboxingLayer ["3. Dual-Kernel Sandboxing & Execution Layer"]
-        PoolMgr -->|Inject Payload & Ephemeral Mount| Executor[Sandboxed Process Supervisor]
+        PoolMgr -->|"Inject Payload & Ephemeral Mount"| Executor["Sandboxed Process Supervisor"]
         
         subgraph Fencing ["Kernel Isolation Boundaries"]
-            Executor --- Cgroups[cgroups v2 / Job Objects: RAM 128MB, CPU 0.5, PIDs 16]
-            Executor --- Seccomp[seccomp-bpf Whitelist: Block socket, clone escapes, ptrace]
-            Executor --- Watchdog[Dual-Deadline Watchdog: Wall-Clock + Kernel SIGKILL]
-            Executor --- EphemeralFS[Ephemeral Workspace: Read-Only Root + 16MB In-Memory tmpfs]
+            Executor --- Cgroups["cgroups v2 / Job Objects: RAM 128MB, CPU 0.5, PIDs 16"]
+            Executor --- Seccomp["seccomp-bpf Whitelist: Block socket, clone, ptrace"]
+            Executor --- Watchdog["Dual-Deadline Watchdog: Wall-Clock + Kernel SIGKILL"]
+            Executor --- EphemeralFS["Ephemeral Workspace: Read-Only Root + 16MB tmpfs"]
         end
         
-        Executor -->|stdout / stderr byte stream| OutputCollector[Buffer Truncation Collector: Max 64KB]
+        Executor -->|"stdout / stderr byte stream"| OutputCollector["Buffer Truncation Collector (Max 64KB)"]
     end
 
     subgraph VerdictEngine ["4. Telemetry & Verdict Engine"]
-        OutputCollector --> VerdictClassifier[Verdict & Diagnostics Classifier]
-        VerdictClassifier -->|AC, WA, TLE, MLE, RE, CE, SE| Metrics[Prometheus Exporter: /api/v1/metrics]
-        VerdictClassifier -->|Live WebSocket Chunks| Gateway
+        OutputCollector --> VerdictClassifier["Verdict & Diagnostics Classifier"]
+        VerdictClassifier -->|"AC, WA, TLE, MLE, RE, CE, SE"| Metrics["Prometheus Exporter (/api/v1/metrics)"]
+        VerdictClassifier -->|"Live WebSocket Chunks"| Gateway
     end
 ```
 
@@ -84,30 +84,39 @@ flowchart TD
 ### 2.1 The Cold-Start vs. Pre-Warmed Latency Decomposition
 In a traditional on-demand execution sandbox, end-to-end execution latency $T_{\text{naive}}$ is governed by sequential provisioning stages:
 
-$$T_{\text{naive}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{cgroup\_alloc}} + T_{\text{namespace\_clone}} + T_{\text{overlayfs\_mount}}}_{T_{\text{cold-start}} \approx 450\text{ms} - 800\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + T_{\text{teardown}}$$
+$$
+T_{\text{naive}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{cgroup\_alloc}} + T_{\text{namespace\_clone}} + T_{\text{overlayfs\_mount}}}_{T_{\text{cold-start}} \approx 450\text{ms} - 800\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + T_{\text{teardown}}
+$$
 
 SafeBox replaces synchronous on-demand provisioning with an **Asynchronous FIFO Pre-Warmed Standby Pool**:
 
-$$T_{\text{SafeBox}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{warm\_acquire}}}_{\le 5\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + \underbrace{T_{\text{async\_replenish}}}_{\text{Non-blocking background}}$$
+$$
+T_{\text{SafeBox}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{warm\_acquire}}}_{\le 5\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + \underbrace{T_{\text{async\_replenish}}}_{\text{Non-blocking background}}
+$$
 
-$$\Delta \text{Latency Reduction} = \frac{T_{\text{naive}} - T_{\text{SafeBox}}}{T_{\text{naive}}} \times 100\% \ge \mathbf{85.0\%}$$
+$$
+\Delta \text{Latency Reduction} = \frac{T_{\text{naive}} - T_{\text{SafeBox}}}{T_{\text{naive}}} \times 100\% \ge 85.0\%
+$$
 
 ### 2.2 CPU Bandwidth Throttling via Completely Fair Scheduler (CFS)
 To prevent infinite busy loops from consuming full CPU capacity, SafeBox sets cgroups v2 CFS bandwidth parameters:
 
-$$\text{Quota} = 50\,000\,\mu\text{s}, \quad \text{Period} = 100\,000\,\mu\text{s} \implies \text{CPU Allocation} = \frac{\text{Quota}}{\text{Period}} = 0.50 \text{ Cores}$$
+$$
+\text{Quota} = 50000\,\mu\text{s}, \quad \text{Period} = 100000\,\mu\text{s} \implies \text{CPU Allocation} = \frac{\text{Quota}}{\text{Period}} = 0.50 \text{ Cores}
+$$
 
 Under Windows, equivalent thread throttling is enforced via `JobObjectBasicLimitInformation.PerProcessUserTimeLimit`.
 
 ### 2.3 Strict Memory Ceiling & OOM Boundary
 Let $M_{\text{alloc}}$ be the cumulative memory requested by the user process. SafeBox enforces a non-negotiable physical ceiling:
 
-$$M_{\text{limit}} = 128 \times 1024 \times 1024 \text{ Bytes } (128\text{ MB})$$
+$$
+M_{\text{limit}} = 128 \times 1024 \times 1024 \text{ Bytes } (128\text{ MB})
+$$
 
-$$\text{If } M_{\text{alloc}} > M_{\text{limit}} \implies \begin{cases}
-\text{Linux:} & \text{cgroups } \texttt{memory.events:oom\_kill} \uparrow \implies \text{Kernel SIGKILL (Exit 137)} \\
-\text{Windows:} & \text{Job Object } \texttt{STATUS\_QUOTA\_EXCEEDED} \implies \text{TerminateProcess}
-\end{cases} \implies \mathbf{MLE}$$
+$$
+M_{\text{alloc}} > M_{\text{limit}} \implies \text{Kernel SIGKILL (OOM Killer)} \implies \text{Verdict: MLE}
+$$
 
 ---
 
@@ -117,13 +126,13 @@ SafeBox implements multi-tiered isolation to eliminate common container-escape a
 
 | Attack Vector | Adversarial Mechanism | SafeBox Kernel Defense Primitive | Emitted Verdict |
 |---|---|---|---|
-| **Fork Bomb / PID Flooding** | `:(){ :\|:& };:` or `while(1) fork()` | `cgroups v2: pids.max = 16` / Windows `ActiveProcessLimit = 16`. Process spawning halts with `EAGAIN`. | `SECURITY_VIOLATION` / `RUNTIME_ERROR` |
-| **Network Socket Exfiltration** | Attacker probes host ports or AWS/GCP metadata (`169.254.169.254`) | `seccomp-bpf` disallows `socket()`, `connect()`, `bind()`. Network namespace unshared (`--network none`). | `SECURITY_VIOLATION` |
+| **Fork Bomb / PID Flooding** | Process flood via `fork()` | `cgroups v2: pids.max = 16` / Windows `ActiveProcessLimit = 16`. Process spawning halts with `EAGAIN`. | `SECURITY_VIOLATION` / `RUNTIME_ERROR` |
+| **Network Socket Exfiltration** | Attacker probes host ports or cloud metadata (`169.254.169.254`) | `seccomp-bpf` disallows `socket()`, `connect()`, `bind()`. Network namespace unshared (`--network none`). | `SECURITY_VIOLATION` |
 | **Memory Exhaustion (OOM)** | Process allocates infinite heap vectors | `memory.max = 128MB`, `memory.swap.max = 0`. Monitored via `memory.events`. | `MEMORY_LIMIT_EXCEEDED` |
 | **Infinite Computation Loops** | `while(true) {}` busy waiting | Dual-deadline timer: Wall-clock watchdog interrupts process with uncatchable `SIGKILL`. | `TIME_LIMIT_EXCEEDED` |
 | **Disk Filling Attack** | Writing gigabytes of junk to disk | Read-only root filesystem (`ro`) + 16MB in-memory `tmpfs` mounted at `/tmp` (`noexec,nodev,nosuid`). | `RUNTIME_ERROR` |
 | **Privilege Escalation** | Invoking root exploits / kernel probes | Unprivileged non-root user (`uid=10001, gid=10001`) with all Linux capabilities dropped (`--cap-drop=ALL`). | `SECURITY_VIOLATION` |
-| **Output Buffer Bomb** | `while(True): print('A')` | Stream truncation at `65,536` bytes ($64\text{ KB}$), preventing memory amplification attacks. | `ACCEPTED` / `OUTPUT_TRUNCATED` |
+| **Output Buffer Bomb** | `while(True): print('A')` | Stream truncation at `65,536` bytes (64 KB), preventing memory amplification attacks. | `ACCEPTED` / `OUTPUT_TRUNCATED` |
 
 ---
 
@@ -135,9 +144,9 @@ Benchmarked on an Intel Core i7 / 16GB RAM host under continuous load ($N=100$ i
 
 | Execution Strategy | P50 Latency | P95 Latency | P99 Latency | Cold-Start Overhead |
 |---|---|---|---|---|
-| **Naive Container Spawn (`docker run`)** | $312.4\text{ ms}$ | $540.2\text{ ms}$ | $680.1\text{ ms}$ | $\approx 450\text{ ms}$ |
-| **On-Demand Isolated Subprocess** | $49.8\text{ ms}$ | $53.6\text{ ms}$ | $68.2\text{ ms}$ | $\approx 25\text{ ms}$ |
-| **SafeBox Pre-Warmed Pool** | **$48.1\text{ ms}$** | **$51.0\text{ ms}$** | **$59.7\text{ ms}$** | **$<5\text{ ms}$ (Acquisition)** |
+| **Naive Container Spawn (`docker run`)** | 312.4 ms | 540.2 ms | 680.1 ms | $\approx 450\text{ ms}$ |
+| **On-Demand Isolated Subprocess** | 49.8 ms | 53.6 ms | 68.2 ms | $\approx 25\text{ ms}$ |
+| **SafeBox Pre-Warmed Pool** | **48.1 ms** | **51.0 ms** | **59.7 ms** | **$<5\text{ ms}$ (Acquisition)** |
 
 ### 4.2 Resource Containment Verification
 
@@ -159,10 +168,7 @@ Benchmarked on an Intel Core i7 / 16GB RAM host under continuous load ($N=100$ i
 
 ```
 safebox/
-├── .github/
-│   └── workflows/
-│       └── ci.yml                 # Automated Multi-OS (Ubuntu + Windows) CI pipeline
-├── .gitignore                     # Clean repository exclusions
+├── .gitignore                     # Repository exclusions (pycache, temp directories)
 ├── LICENSE                        # MIT Open Source License
 ├── README.md                      # Systems Architecture & Design Specification
 ├── requirements.txt               # Lightweight open-source dependencies
@@ -170,6 +176,8 @@ safebox/
 ├── benchmarks/
 │   └── benchmark_latency.py       # P50/P95 empirical latency benchmark suite
 ├── safebox/
+│   ├── deploy/
+│   │   └── ci.yml                 # Multi-OS CI pipeline specification
 │   ├── profiles/
 │   │   └── seccomp-strict.json    # Production seccomp-bpf syscall whitelist
 │   ├── docker/
