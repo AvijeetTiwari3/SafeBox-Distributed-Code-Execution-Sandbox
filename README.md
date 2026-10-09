@@ -85,24 +85,26 @@ flowchart TD
 In a traditional on-demand execution sandbox, end-to-end execution latency $T_{\text{naive}}$ is governed by sequential provisioning stages:
 
 $$
-T_{\text{naive}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{cgroup\_alloc}} + T_{\text{namespace\_clone}} + T_{\text{overlayfs\_mount}}}_{T_{\text{cold-start}} \approx 450\text{ms} - 800\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + T_{\text{teardown}}
+T_{\text{naive}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{cgroup}} + T_{\text{namespace}} + T_{\text{mount}}}_{T_{\text{cold-start}} \approx 450\text{ms} - 800\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + T_{\text{teardown}}
 $$
 
 SafeBox replaces synchronous on-demand provisioning with an **Asynchronous FIFO Pre-Warmed Standby Pool**:
 
 $$
-T_{\text{SafeBox}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{warm\_acquire}}}_{\le 5\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + \underbrace{T_{\text{async\_replenish}}}_{\text{Non-blocking background}}
+T_{\text{SafeBox}} = T_{\text{net}} + T_{\text{queue}} + \underbrace{T_{\text{acquire}}}_{\le 5\text{ms}} + T_{\text{compile}} + T_{\text{exec}} + \underbrace{T_{\text{replenish}}}_{\text{Non-blocking background}}
 $$
 
 $$
-\Delta \text{Latency Reduction} = \frac{T_{\text{naive}} - T_{\text{SafeBox}}}{T_{\text{naive}}} \times 100\% \ge 85.0\%
+\Delta \text{Latency Reduction} = \left( \frac{T_{\text{naive}} - T_{\text{SafeBox}}}{T_{\text{naive}}} \right) \times 100 \ge 85.0
 $$
+
+*(Yielding a guaranteed $\ge 85\%$ drop in P95 execution start latency)*
 
 ### 2.2 CPU Bandwidth Throttling via Completely Fair Scheduler (CFS)
 To prevent infinite busy loops from consuming full CPU capacity, SafeBox sets cgroups v2 CFS bandwidth parameters:
 
 $$
-\text{Quota} = 50000\,\mu\text{s}, \quad \text{Period} = 100000\,\mu\text{s} \implies \text{CPU Allocation} = \frac{\text{Quota}}{\text{Period}} = 0.50 \text{ Cores}
+\text{Quota} = 50\text{ms}, \quad \text{Period} = 100\text{ms} \implies \text{CPU Allocation} = \frac{\text{Quota}}{\text{Period}} = 0.50 \text{ Cores}
 $$
 
 Under Windows, equivalent thread throttling is enforced via `JobObjectBasicLimitInformation.PerProcessUserTimeLimit`.
