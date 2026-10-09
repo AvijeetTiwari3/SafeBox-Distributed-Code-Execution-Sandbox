@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeBox — Distributed Untrusted Code Execution Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        pre, code, textarea { font-family: 'Fira Code', monospace; }
+        .glass { background: rgba(17, 24, 39, 0.75); backdrop-filter: blur(12px); }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+    <!-- Navbar -->
+    <header class="border-b border-slate-800 bg-slate-900/80 sticky top-0 z-50 px-6 py-3.5 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-lg">
+                ⚡
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-tight text-white flex items-center space-x-2">
+                    <span>SafeBox</span>
+                    <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">v1.0 Engine</span>
+                </h1>
+                <p class="text-xs text-slate-400">Kernel Sandboxing • Pre-Warmed Pools • Zero Cold-Start</p>
+            </div>
+        </div>
+
+        <!-- Telemetry Pill Indicators -->
+        <div class="flex items-center space-x-4 text-xs">
+            <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-md border border-slate-700">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="text-slate-300">Sandbox Isolation:</span>
+                <span id="sandbox-type" class="font-semibold text-emerald-400">OS Kernel Limits</span>
+            </div>
+            <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-md border border-slate-700">
+                <span class="text-slate-300">Warm Pool Slots:</span>
+                <span id="pool-slots-count" class="font-semibold text-cyan-400">Ready</span>
+            </div>
+            <a href="/docs" target="_blank" class="text-slate-400 hover:text-slate-200 transition-colors">API Docs</a>
+            <a href="/api/v1/metrics" target="_blank" class="text-slate-400 hover:text-slate-200 transition-colors">Prometheus</a>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 max-w-[1700px] w-full mx-auto">
+        <!-- Left: Code Editor & Config -->
+        <section class="lg:col-span-7 flex flex-col space-y-4">
+            <!-- Controls bar -->
+            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-900 p-3 rounded-lg border border-slate-800">
+                <div class="flex items-center space-x-3">
+                    <label class="text-xs font-medium text-slate-400 uppercase tracking-wider">Runtime</label>
+                    <select id="lang-select" class="bg-slate-800 text-sm font-medium text-slate-200 border border-slate-700 rounded-md px-3 py-1.5 focus:outline-none focus:border-emerald-500">
+                        <option value="python">Python 3.10</option>
+                        <option value="cpp">C++ 17 (MinGW/GCC)</option>
+                        <option value="javascript">JavaScript (Node.js)</option>
+                    </select>
+                </div>
+
+                <!-- Presets & Attack Benchmarks -->
+                <div class="flex items-center space-x-2">
+                    <span class="text-xs text-slate-400">Presets:</span>
+                    <button onclick="loadPreset('ac')" class="text-xs px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition">Hello AC</button>
+                    <button onclick="loadPreset('tle')" class="text-xs px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded border border-amber-500/20 transition">Loop TLE</button>
+                    <button onclick="loadPreset('mle')" class="text-xs px-2.5 py-1 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 rounded border border-purple-500/20 transition">2GB MLE</button>
+                    <button onclick="loadPreset('fork')" class="text-xs px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded border border-rose-500/20 transition">Fork Bomb</button>
+                    <button onclick="loadPreset('socket')" class="text-xs px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded border border-red-500/20 transition">Socket Exfil</button>
+                </div>
+            </div>
+
+            <!-- Code Editor Box -->
+            <div class="flex-1 flex flex-col bg-slate-900 rounded-lg border border-slate-800 overflow-hidden shadow-xl min-h-[420px]">
+                <div class="bg-slate-800/60 px-4 py-2 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                    <span id="editor-filename">solution.py</span>
+                    <span class="text-slate-500">Memory Cap: 128MB • Time Cap: 2000ms</span>
+                </div>
+                <textarea id="code-editor" class="flex-1 w-full bg-slate-950 p-4 text-sm text-slate-200 outline-none resize-none font-mono leading-relaxed" spellcheck="false"></textarea>
+            </div>
+
+            <!-- Inputs & Test Cases Tabs -->
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-slate-900 rounded-lg border border-slate-800 p-3">
+                    <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">Standard Input (stdin)</label>
+                    <textarea id="stdin-input" class="w-full h-24 bg-slate-950 p-2.5 text-xs text-slate-300 rounded border border-slate-800 focus:outline-none focus:border-slate-600 font-mono resize-none" placeholder="Provide test inputs here..."></textarea>
+                </div>
+                <div class="bg-slate-900 rounded-lg border border-slate-800 p-3">
+                    <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">Expected Output (Optional for AC/WA)</label>
+                    <textarea id="expected-output" class="w-full h-24 bg-slate-950 p-2.5 text-xs text-slate-300 rounded border border-slate-800 focus:outline-none focus:border-slate-600 font-mono resize-none" placeholder="Leave empty or enter expected text..."></textarea>
+                </div>
+            </div>
+
+            <!-- Action buttons -->
+            <div class="flex items-center space-x-3">
+                <button id="run-btn" onclick="executePayload()" class="flex-1 py-3 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-sm transition-all shadow-lg shadow-emerald-900/30 flex items-center justify-center space-x-2">
+                    <span id="run-spinner" class="hidden animate-spin">🌀</span>
+                    <span>⚡ Run in SafeBox Sandbox</span>
+                </button>
+                <button onclick="clearConsole()" class="px-4 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium transition">
+                    Clear
+                </button>
+            </div>
+        </section>
+
+        <!-- Right: Execution Telemetry & Live Output -->
+        <section class="lg:col-span-5 flex flex-col space-y-4">
+            <!-- Verdict Banner -->
+            <div id="verdict-banner" class="p-4 rounded-lg border border-slate-800 bg-slate-900 flex items-center justify-between transition-all">
+                <div>
+                    <span class="text-xs uppercase tracking-wider text-slate-400 font-semibold block">Verdict</span>
+                    <span id="verdict-text" class="text-xl font-bold text-slate-300">IDLE</span>
+                </div>
+                <div id="verdict-badge" class="px-3 py-1 rounded-md text-xs font-semibold bg-slate-800 text-slate-400">
+                    Awaiting Run
+                </div>
+            </div>
+
+            <!-- Performance Metrics Grid -->
+            <div class="grid grid-cols-3 gap-3">
+                <div class="bg-slate-900 p-3 rounded-lg border border-slate-800">
+                    <span class="text-[11px] uppercase tracking-wider text-slate-400 block">Execution Time</span>
+                    <span id="metric-time" class="text-lg font-bold text-emerald-400 font-mono">0.0 ms</span>
+                </div>
+                <div class="bg-slate-900 p-3 rounded-lg border border-slate-800">
+                    <span class="text-[11px] uppercase tracking-wider text-slate-400 block">Peak Memory</span>
+                    <span id="metric-memory" class="text-lg font-bold text-cyan-400 font-mono">0.0 MB</span>
+                </div>
+                <div class="bg-slate-900 p-3 rounded-lg border border-slate-800">
+                    <span class="text-[11px] uppercase tracking-wider text-slate-400 block">Exit Code</span>
+                    <span id="metric-exitcode" class="text-lg font-bold text-slate-300 font-mono">-</span>
+                </div>
+            </div>
+
+            <!-- Diagnostics & Security Box -->
+            <div id="diagnostics-box" class="bg-slate-900 p-3 rounded-lg border border-slate-800 text-xs">
+                <span class="text-slate-400 font-semibold block mb-1">Diagnostics / Security Audit:</span>
+                <p id="diagnostics-text" class="text-slate-300 italic">No execution run yet.</p>
+            </div>
+
+            <!-- Live Terminal Output -->
+            <div class="flex-1 flex flex-col bg-slate-900 rounded-lg border border-slate-800 overflow-hidden min-h-[300px]">
+                <div class="bg-slate-800/80 px-4 py-2 border-b border-slate-800 flex items-center justify-between text-xs">
+                    <span class="font-semibold text-slate-300 flex items-center space-x-1.5">
+                        <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+                        <span>Terminal Output (stdout / stderr)</span>
+                    </span>
+                    <span id="stream-indicator" class="text-[11px] text-slate-500">Idle</span>
+                </div>
+                <pre id="terminal-stdout" class="flex-1 p-4 bg-black/80 text-xs text-emerald-300 font-mono overflow-auto whitespace-pre-wrap leading-relaxed">Waiting for execution request...</pre>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
